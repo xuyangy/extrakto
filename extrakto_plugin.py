@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from collections import OrderedDict
 
@@ -253,40 +254,34 @@ class ExtraktoPlugin:
         return capture_start
 
     def capture_panes(self):
-        captured = ""
         capture_pane_start = self.get_capture_pane_start()
 
+        # collect (pane_id, socket) tasks
+        tasks = []
+
         if self.grab_area.startswith("all "):
-            # all panes in all sessions
             panes = subprocess.check_output(
                 ["tmux", "list-panes", "-a", "-F", "#{pane_id}"],
                 universal_newlines=True,
             ).strip().split("\n")
-            for pane_id in panes:
-                if pane_id and pane_id != self.trigger_pane:
-                    captured += self.capture_pane(pane_id, capture_pane_start) + "\n"
+            tasks += [(p, None) for p in panes if p and p != self.trigger_pane]
         elif self.grab_area.startswith("session "):
-            # all panes in all windows of the current session
             panes = subprocess.check_output(
                 ["tmux", "list-panes", "-s", "-F", "#{pane_id}"],
                 universal_newlines=True,
             ).strip().split("\n")
-            for pane_id in panes:
-                if pane_id and pane_id != self.trigger_pane:
-                    captured += self.capture_pane(pane_id, capture_pane_start) + "\n"
+            tasks += [(p, None) for p in panes if p and p != self.trigger_pane]
         elif self.grab_area.startswith("window "):
             panes = subprocess.check_output(
                 ["tmux", "list-panes", "-F", "#{pane_active}:#{pane_id}"],
                 universal_newlines=True,
             ).split("\n")
-            for pane in panes:
+            tasks += [
+                (p[2:], None) for p in panes
                 # exclude the active (for split) and trigger panes
-                # in popup mode the active and tigger panes are the same
-                # todo: split by :
-                if pane.startswith("0:") and pane[:2] != self.trigger_pane:
-                    captured += self.capture_pane(pane[2:], capture_pane_start) + "\n"
-
-        captured += self.capture_pane(self.trigger_pane, capture_pane_start)
+                # in popup mode the active and trigger panes are the same
+                if p.startswith("0:") and p[2:] != self.trigger_pane
+            ]
 
         for socket in self.extra_sockets:
             try:
@@ -294,12 +289,23 @@ class ExtraktoPlugin:
                     ["tmux", "-L", socket, "list-panes", "-a", "-F", "#{pane_id}"],
                     universal_newlines=True,
                 ).strip().split("\n")
-                for pane_id in panes:
-                    if pane_id:
-                        captured += self.capture_pane(pane_id, capture_pane_start, socket=socket) + "\n"
+                tasks += [(p, socket) for p in panes if p]
             except subprocess.CalledProcessError:
                 pass  # socket not running, skip silently
 
+        # capture all non-trigger panes in parallel, trigger pane last
+        results = {}
+        if tasks:
+            with ThreadPoolExecutor() as executor:
+                futures = {
+                    executor.submit(self.capture_pane, pane_id, capture_pane_start, socket): i
+                    for i, (pane_id, socket) in enumerate(tasks)
+                }
+                for future in as_completed(futures):
+                    results[futures[future]] = future.result()
+
+        captured = "".join(results[i] + "\n" for i in sorted(results))
+        captured += self.capture_pane(self.trigger_pane, capture_pane_start)
         return captured
 
     def capture_pane(self, pane, capture_pane_start, socket=None):
