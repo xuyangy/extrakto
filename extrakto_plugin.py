@@ -292,6 +292,7 @@ class ExtraktoPlugin:
                 panes = subprocess.check_output(
                     ["tmux", "-L", socket, "list-panes", "-a", "-F", "#{pane_id}"],
                     universal_newlines=True,
+                    stderr=subprocess.DEVNULL,
                 ).strip().split("\n")
                 tasks += [(p, socket) for p in panes if p]
             except subprocess.CalledProcessError:
