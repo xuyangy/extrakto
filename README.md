@@ -14,7 +14,7 @@ You can **fuzzy find your text** instead of selecting it by hand:
 - press
   - `tab` to insert it to the current pane,
   - `enter` to copy it to the clipboard,
-- see other features in [HELP](HELP.md) (press `ctrl-l` in extrakto)
+- see other features in [HELP](HELP.md)
 
 Use it for paths, URLs, options from a man page, git hashes, docker container names, ...
 
@@ -117,6 +117,7 @@ Where `<option>` and `<value>` correspond to one of the options specified below
 | `@extrakto_copy_key`                  | `enter`         | Key to copy selection to clipboard. |
 | `@extrakto_insert_key`                | `tab`           | Key to insert selection. |
 | `@extrakto_filter_key`                | `ctrl-f`        | Key to toggle filter mode (see `@extrakto_filter_order`). |
+| `@extrakto_line_key`                  | `ctrl-l`        | Key to switch directly to the line filter. |
 | `@extrakto_grab_key`                  | `ctrl-g`        | Key to toggle grab mode. |
 | `@extrakto_edit_key`                  | `ctrl-e`        | Key to run the editor. |
 | `@extrakto_open_key`                  | `ctrl-o`        | Key to run the open command. |
@@ -134,7 +135,7 @@ All but `@extrakto_key` are controlled by fzf and must follow its conventions.
 | `@extrakto_editor`                    |                 | This defaults to `$EDITOR` if not set. |
 | `@extrakto_fzf_layout`                |`default`        | Control the fzf layout which is "bottom-up" by default. If you prefer "top-down" layout instead set this to `reverse`. In fact, this value is passed to the fzf `--layout` parameter. Possible values are: `default`, `reverse` and `reverse-list` |
 | `@extrakto_fzf_tool`                  | `fzf`           | Set this to path of fzf if it can't be found in your `PATH`. If you prefer skim you need to set this option to `sk` or its full path. |
-| `@extrakto_fzf_header`                | `i c o e f g h` | Define the fzf header to show keys for insert, copy, open, edit, filter, grab and help. Not shown by default: m=clip mode. You can add, reorder or omit information you don't need.|
+| `@extrakto_fzf_header`                | `i c o e q s p l f g` | Define the fzf header to show keys for insert, copy, open, edit, quote, squote, path, line, filter and grab. Not shown by default: m=clip mode. You can add, reorder or omit information you don't need.|
 | `@extrakto_fzf_unset_default_opts`    | `true`          | Unsets custom FZF_DEFAULT_OPTS as it can potentially cause problems in extrakto operations |
 | `@extrakto_open_tool`                 | `auto`          | Set this to path of your own tool or `auto` to use your platforms *open* implementation. |
 | `@extrakto_popup_position`            | `C`             | Set position of the tmux popup window. Possible values are in the `display-popup` entry in `man tmux`. Set this to `x,y` to set the x and y positions to `x` and `y` respectively. |
@@ -250,4 +251,3 @@ Thanks go to all contributors for their ideas and PRs!
 **If you make a PR, please keep it small so that it's easier to test and review. Try to create one PR per feature/bug.**
 
 Please run `black` if you change any python code and run `shfmt -p` if you change any shell files.
-

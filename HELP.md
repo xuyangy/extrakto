@@ -11,6 +11,8 @@ Extrakto uses fzf. You only need to type a few keys to find your selection with 
     the all selection (see extrakto.conf).
   - *line*, select full lines
 
+- Press *ctrl-l* to switch directly to the *line* filter (*line_key*)
+
 - Press *ctrl-g* to change the grab area (see *grab_key* and configuration)
   - *full*, everything from the current pane
   - *window full*, everything from all panes in this window

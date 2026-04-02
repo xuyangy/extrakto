@@ -6,10 +6,8 @@ import sys
 import traceback
 
 from collections import OrderedDict
+
 from extrakto import Extrakto, get_lines
-PRJ_URL = "https://github.com/laktak/extrakto"
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-HELP_PATH = os.path.join(SCRIPT_DIR, "HELP.md")
 
 COLORS = {
     "RED": "\033[0;31m",
@@ -32,16 +30,17 @@ DEFAULT_OPTIONS = {
     "@extrakto_edit_key": "ctrl-e",
     "@extrakto_filter_key": "ctrl-f",
     "@extrakto_filter_order": "word all line",
-    "@extrakto_fzf_header": "i c o e q s p f g h",
+    "@extrakto_fzf_header": "i c o e q s p l f g",
     "@extrakto_path_key": "ctrl-p",
     "@extrakto_fzf_layout": "default",
     "@extrakto_fzf_tool": "fzf",
     "@extrakto_fzf_unset_default_opts": "true",
     "@extrakto_grab_area": "window full",
     "@extrakto_grab_key": "ctrl-g",
-    "@extrakto_help_key": "ctrl-l",
+    "@extrakto_help_key": "",
     "@extrakto_history_limit": "2000",
     "@extrakto_insert_key": "tab",
+    "@extrakto_line_key": "ctrl-l",
     "@extrakto_open_key": "ctrl-o",
     "@extrakto_open_tool": "auto",
     "@extrakto_quote_key": "ctrl-q",
@@ -142,8 +141,8 @@ class ExtraktoPlugin:
         self.fzf_tool = get_option("@extrakto_fzf_tool")
         self.grab_area = get_option("@extrakto_grab_area")
         self.grab_key = get_option("@extrakto_grab_key")
-        self.help_key = get_option("@extrakto_help_key")
         self.insert_key = get_option("@extrakto_insert_key")
+        self.line_key = get_option("@extrakto_line_key")
         self.open_key = get_option("@extrakto_open_key")
         self.open_tool = get_option("@extrakto_open_tool")
         self.path_key = get_option("@extrakto_path_key")
@@ -325,41 +324,83 @@ class ExtraktoPlugin:
 
     def capture(self):
         sel_filter = self.next_filter["initial"]
-        header_tmpl = ""
+        header_parts = []
         for o in self.fzf_header.split(" "):
-            if header_tmpl:
-                header_tmpl += ", "
+            if not o:
+                continue
             if o == "i":
-                header_tmpl += (
+                header_parts.append(
                     f"{COLORS['BOLD']}{self.insert_key}{COLORS['OFF']}=insert"
                 )
             elif o == "c":
-                header_tmpl += f"{COLORS['BOLD']}{self.copy_key}{COLORS['OFF']}=copy"
+                header_parts.append(
+                    f"{COLORS['BOLD']}{self.copy_key}{COLORS['OFF']}=copy"
+                )
             elif o == "o":
                 if self.open_tool:
-                    header_tmpl += (
+                    header_parts.append(
                         f"{COLORS['BOLD']}{self.open_key}{COLORS['OFF']}=open"
                     )
             elif o == "e":
-                header_tmpl += f"{COLORS['BOLD']}{self.edit_key}{COLORS['OFF']}=edit"
+                header_parts.append(
+                    f"{COLORS['BOLD']}{self.edit_key}{COLORS['OFF']}=edit"
+                )
             elif o == "q":
-                header_tmpl += f"{COLORS['BOLD']}{self.quote_key}{COLORS['OFF']}=quote"
+                header_parts.append(
+                    f"{COLORS['BOLD']}{self.quote_key}{COLORS['OFF']}=quote"
+                )
             elif o == "s":
-                header_tmpl += (
+                header_parts.append(
                     f"{COLORS['BOLD']}{self.squote_key}{COLORS['OFF']}=squote"
                 )
             elif o == "p":
-                header_tmpl += f"{COLORS['BOLD']}{self.path_key}{COLORS['OFF']}=path"
+                header_parts.append(
+                    f"{COLORS['BOLD']}{self.path_key}{COLORS['OFF']}=path"
+                )
+            elif o == "l":
+                header_parts.append(
+                    f"{COLORS['BOLD']}{self.line_key}{COLORS['OFF']}=line"
+                )
             elif o == "f":
-                header_tmpl += f"{COLORS['BOLD']}{self.filter_key}{COLORS['OFF']}=filter [{COLORS['YELLOW']}{COLORS['BOLD']}:filter:{COLORS['OFF']}]"
+                header_parts.append(
+                    f"{COLORS['BOLD']}{self.filter_key}{COLORS['OFF']}=filter [{COLORS['YELLOW']}{COLORS['BOLD']}:filter:{COLORS['OFF']}]"
+                )
             elif o == "g":
-                header_tmpl += f"{COLORS['BOLD']}{self.grab_key}{COLORS['OFF']}=grab [{COLORS['YELLOW']}{COLORS['BOLD']}:ga:{COLORS['OFF']}]"
+                header_parts.append(
+                    f"{COLORS['BOLD']}{self.grab_key}{COLORS['OFF']}=grab [{COLORS['YELLOW']}{COLORS['BOLD']}:ga:{COLORS['OFF']}]"
+                )
             elif o == "m":
-                header_tmpl += f"{COLORS['BOLD']}{self.clip_mode_key}{COLORS['OFF']}=clip [{COLORS['YELLOW']}{COLORS['BOLD']}:clip_mode:{COLORS['OFF']}]"
+                header_parts.append(
+                    f"{COLORS['BOLD']}{self.clip_mode_key}{COLORS['OFF']}=clip [{COLORS['YELLOW']}{COLORS['BOLD']}:clip_mode:{COLORS['OFF']}]"
+                )
             elif o == "h":
-                header_tmpl += f"{COLORS['BOLD']}{self.help_key}{COLORS['OFF']}=help"
+                continue
             else:
-                header_tmpl += "(config error)"
+                header_parts.append("(config error)")
+
+        header_tmpl = ", ".join(header_parts)
+        expect_keys = list(
+            OrderedDict.fromkeys(
+                key
+                for key in [
+                    "ctrl-c",
+                    "ctrl-g",
+                    "esc",
+                    self.insert_key,
+                    self.copy_key,
+                    self.filter_key,
+                    self.edit_key,
+                    self.quote_key,
+                    self.squote_key,
+                    self.path_key,
+                    self.line_key,
+                    self.open_key,
+                    self.grab_key,
+                    self.clip_mode_key,
+                ]
+                if key
+            )
+        )
 
         query = ""
         while True:
@@ -378,8 +419,7 @@ class ExtraktoPlugin:
                     "--print-query",
                     f"--query={query}",
                     f"--header={header}",
-                    f"--expect=ctrl-c,ctrl-g,esc",
-                    f"--expect={self.insert_key},{self.copy_key},{self.filter_key},{self.edit_key},{self.quote_key},{self.squote_key},{self.path_key},{self.open_key},{self.grab_key},{self.help_key},{self.clip_mode_key}",
+                    f"--expect={','.join(expect_keys)}",
                     "--tiebreak=index",
                     f"--layout={self.fzf_layout}",
                     "--no-info",
@@ -437,6 +477,8 @@ class ExtraktoPlugin:
                 sel_filter = "s-quote"
             elif key == self.path_key:
                 sel_filter = "path"
+            elif key == self.line_key:
+                sel_filter = "line"
             elif key == self.clip_mode_key:
                 self.clip_mode = self.next_clip_mode[self.clip_mode]
             elif key == self.grab_key:
@@ -489,24 +531,6 @@ class ExtraktoPlugin:
                     check=True,
                 )
                 return 0
-            elif key == self.help_key:
-                try:
-                    subprocess.run(["clear"], check=True)
-                    subprocess.run(
-                        ["less", "-+EF", HELP_PATH],
-                        check=True,
-                    )
-                except Exception as _:
-                    print(open(HELP_PATH).read())
-                    print("error: unable show help with less")
-                print("\nSince the help page is not 'extrakt'-able:")
-                confirm = input(
-                    "Do you wish to [o]pen or [c]opy the GitHub page or [a]bort? [ocA] "
-                ).lower()
-                if confirm == "o":
-                    self.open(PRJ_URL)
-                elif confirm == "c":
-                    self.copy(PRJ_URL)
             else:
                 return 0
 
