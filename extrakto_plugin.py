@@ -233,22 +233,45 @@ class ExtraktoPlugin:
 
     # this returns the start point parameter for `tmux capture-pane`.
     def get_capture_pane_start(self):
-        if self.grab_area == "recent" or self.grab_area == "window recent":
+        area = self.grab_area
+        # strip scope prefix to get the size part
+        for prefix in ("all ", "session ", "window "):
+            if area.startswith(prefix):
+                area = area[len(prefix):]
+                break
+
+        if area == "recent":
             capture_start = "-10"
-        elif self.grab_area == "full" or self.grab_area == "window full":
+        elif area == "full":
             history_limit = get_option("@extrakto_history_limit")
             capture_start = f"-{history_limit}"
-        elif self.grab_area.startswith("window "):
-            capture_start = f"-{self.grab_area[7:]}"
         else:
-            capture_start = f"-{self.grab_area}"
+            capture_start = f"-{area}"
         return capture_start
 
     def capture_panes(self):
         captured = ""
         capture_pane_start = self.get_capture_pane_start()
 
-        if self.grab_area.startswith("window"):
+        if self.grab_area.startswith("all "):
+            # all panes in all sessions
+            panes = subprocess.check_output(
+                ["tmux", "list-panes", "-a", "-F", "#{pane_id}"],
+                universal_newlines=True,
+            ).strip().split("\n")
+            for pane_id in panes:
+                if pane_id and pane_id != self.trigger_pane:
+                    captured += self.capture_pane(pane_id, capture_pane_start) + "\n"
+        elif self.grab_area.startswith("session "):
+            # all panes in all windows of the current session
+            panes = subprocess.check_output(
+                ["tmux", "list-panes", "-s", "-F", "#{pane_id}"],
+                universal_newlines=True,
+            ).strip().split("\n")
+            for pane_id in panes:
+                if pane_id and pane_id != self.trigger_pane:
+                    captured += self.capture_pane(pane_id, capture_pane_start) + "\n"
+        elif self.grab_area.startswith("window "):
             panes = subprocess.check_output(
                 ["tmux", "list-panes", "-F", "#{pane_active}:#{pane_id}"],
                 universal_newlines=True,
@@ -266,7 +289,7 @@ class ExtraktoPlugin:
     def capture_pane(self, pane, capture_pane_start):
         command = ["tmux", "capture-pane", "-pJ", "-S", capture_pane_start, "-t", pane]
 
-        if self.grab_area in ("recent", "window recent"):
+        if self.grab_area.endswith("recent"):
             try:
                 pane_in_mode, scroll_position, pane_height = [
                     int(n)
@@ -482,31 +505,26 @@ class ExtraktoPlugin:
             elif key == self.clip_mode_key:
                 self.clip_mode = self.next_clip_mode[self.clip_mode]
             elif key == self.grab_key:
-                # cycle between options like this:
-                # recent -> full -> window recent -> window full -> custom (if any) -> recent ...
-                if self.grab_area == "recent":
-                    if self.has_single_pane():
-                        self.grab_area = "full"
-                    else:
-                        self.grab_area = "window recent"
-                elif self.grab_area == "window recent":
-                    self.grab_area = "full"
-                elif self.grab_area == "full":
-                    if self.has_single_pane():
-                        self.grab_area = "recent"
-                        if not self.original_grab_area.startswith(
-                            ("window ", "recent", "full")
-                        ):
-                            self.grab_area = self.original_grab_area
-                    else:
-                        self.grab_area = "window full"
-                elif self.grab_area == "window full":
-                    self.grab_area = "recent"
-                    if not self.original_grab_area.startswith(
-                        ("window ", "recent", "full")
-                    ):
-                        self.grab_area = self.original_grab_area
-                else:
+                # cycle: recent -> window recent -> session recent -> all recent
+                #     -> full -> window full -> session full -> all full
+                #     -> custom (if any) -> recent ...
+                grab_cycle = ["recent"]
+                if not self.has_single_pane():
+                    grab_cycle.append("window recent")
+                grab_cycle.extend(["session recent", "all recent", "full"])
+                if not self.has_single_pane():
+                    grab_cycle.append("window full")
+                grab_cycle.extend(["session full", "all full"])
+                # append custom grab area if it's not one of the standard ones
+                if not self.original_grab_area.startswith(
+                    ("window ", "session ", "all ", "recent", "full")
+                ):
+                    grab_cycle.append(self.original_grab_area)
+
+                try:
+                    idx = grab_cycle.index(self.grab_area)
+                    self.grab_area = grab_cycle[(idx + 1) % len(grab_cycle)]
+                except ValueError:
                     self.grab_area = "recent"
             elif key == self.open_key:
                 self.open(text)
