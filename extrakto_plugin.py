@@ -47,6 +47,7 @@ DEFAULT_OPTIONS = {
     "@extrakto_squote_key": "ctrl-s",
     "@extrakto_alt": "all",
     "@extrakto_prefix_name": "all",
+    "@extrakto_extra_sockets": "",
 }
 
 
@@ -150,6 +151,8 @@ class ExtraktoPlugin:
         self.squote_key = get_option("@extrakto_squote_key")
         self.alt = get_option("@extrakto_alt")
         self.prefix_name = get_option("@extrakto_prefix_name")
+        extra_sockets_str = get_option("@extrakto_extra_sockets")
+        self.extra_sockets = extra_sockets_str.split() if extra_sockets_str else []
 
         # pre-create Extrakto instances so get_cap doesn't re-parse config each time
         self.extrakto_all = Extrakto(
@@ -284,18 +287,31 @@ class ExtraktoPlugin:
                     captured += self.capture_pane(pane[2:], capture_pane_start) + "\n"
 
         captured += self.capture_pane(self.trigger_pane, capture_pane_start)
+
+        for socket in self.extra_sockets:
+            try:
+                panes = subprocess.check_output(
+                    ["tmux", "-L", socket, "list-panes", "-a", "-F", "#{pane_id}"],
+                    universal_newlines=True,
+                ).strip().split("\n")
+                for pane_id in panes:
+                    if pane_id:
+                        captured += self.capture_pane(pane_id, capture_pane_start, socket=socket) + "\n"
+            except subprocess.CalledProcessError:
+                pass  # socket not running, skip silently
+
         return captured
 
-    def capture_pane(self, pane, capture_pane_start):
-        command = ["tmux", "capture-pane", "-pJ", "-S", capture_pane_start, "-t", pane]
+    def capture_pane(self, pane, capture_pane_start, socket=None):
+        tmux = ["tmux", "-L", socket] if socket else ["tmux"]
+        command = tmux + ["capture-pane", "-pJ", "-S", capture_pane_start, "-t", pane]
 
         if self.grab_area.endswith("recent"):
             try:
                 pane_in_mode, scroll_position, pane_height = [
                     int(n)
                     for n in subprocess.check_output(
-                        [
-                            "tmux",
+                        tmux + [
                             "display-message",
                             "-p",
                             "-t",
@@ -313,8 +329,7 @@ class ExtraktoPlugin:
                     # In copy-mode, "recent" should follow the currently visible viewport.
                     start = int(capture_pane_start) - scroll_position
                     end = (pane_height - 1) - scroll_position
-                    command = [
-                        "tmux",
+                    command = tmux + [
                         "capture-pane",
                         "-pJ",
                         "-S",
