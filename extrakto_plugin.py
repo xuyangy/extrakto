@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 
 import os
-import platform
-import re
 import subprocess
-import shutil
 import sys
 import traceback
 
 from collections import OrderedDict
 from extrakto import Extrakto, get_lines
-
-PLATFORM = platform.system()
 PRJ_URL = "https://github.com/laktak/extrakto"
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 HELP_PATH = os.path.join(SCRIPT_DIR, "HELP.md")
@@ -188,30 +183,17 @@ class ExtraktoPlugin:
             os.environ.pop("FZF_DEFAULT_OPTS_FILE", None)
 
         if self.clip_tool == "auto":
-            if PLATFORM == "Linux":
-                if re.search(
-                    r"Microsoft|microsoft", open("/proc/sys/kernel/osrelease").read()
-                ):
-                    self.clip_tool = ExtraktoPlugin._get_wsl_clip_executable()
-                elif os.environ.get("XDG_SESSION_TYPE", None) == "wayland":
-                    self.clip_tool = "wl-copy"
-                else:
-                    self.clip_tool = "xclip -i -selection clipboard >/dev/null"
-            elif PLATFORM == "Darwin":
-                self.clip_tool = "pbcopy"
+            self.clip_tool = "pbcopy"
 
         if self.open_tool == "auto":
-            if PLATFORM == "Linux":
-                self.open_tool = "xdg-open >/dev/null"
-            elif PLATFORM == "Darwin":
-                self.open_tool = "open"
+            self.open_tool = "open"
 
         if not self.editor:
             self.editor = os.environ.get("EDITOR", "vi")
 
         if launch_mode != "popup":
             # check terminal size, zoom pane if too small
-            lines = int(subprocess.check_output("tput lines", shell=True))
+            lines = os.get_terminal_size().lines
             if lines < 7:
                 subprocess.run("tmux resize-pane -Z", shell=True)
 
@@ -527,13 +509,6 @@ class ExtraktoPlugin:
                     self.copy(PRJ_URL)
             else:
                 return 0
-
-    @staticmethod
-    def _get_wsl_clip_executable():
-        if shutil.which("clip.exe") is None:
-            return "/mnt/c/Windows/System32/clip.exe"
-        return "clip.exe"
-
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

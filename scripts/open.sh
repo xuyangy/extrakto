@@ -5,33 +5,36 @@ script_dir=$(
 	cd "$script_dir"
 	pwd
 )
-. "$script_dir/helpers.sh"
 python_bin="$HOME/.pyenv/versions/anaconda3-2023.09-0/bin/python3"
 extrakto="$python_bin $script_dir/../extrakto_plugin.py"
 
 pane_id=$1
-split_direction=$(get_option "@extrakto_split_direction" "a")
+
+# Batch-read all options in a single tmux call
+opts=$(tmux display-message -p '#{@extrakto_split_direction}|#{@extrakto_popup_size}|#{@extrakto_popup_position}|#{@extrakto_split_size}')
+split_direction="${opts%%|*}"; opts="${opts#*|}"
+popup_size="${opts%%|*}"; opts="${opts#*|}"
+popup_position="${opts%%|*}"; opts="${opts#*|}"
+split_size="$opts"
+
+split_direction="${split_direction:-a}"
+popup_size="${popup_size:-90%}"
+popup_position="${popup_position:-C}"
+split_size="${split_size:-7}"
 
 if [ "$split_direction" = "a" ]; then
-	if [ -n "$(tmux list-commands popup 2>/dev/null)" ]; then
-		split_direction="p"
-	else
-		split_direction="v"
-	fi
+	split_direction="p"
 fi
 
 extra_options=""
 if [ -n "$2" ]; then
-	# requires tmux 3.3 * Add -e flag to set an environment variable for a popup.
 	extra_options="-e extrakto_inital_mode=$2"
 fi
 
 if [ "$split_direction" = "p" ]; then
-	popup_size=$(get_option "@extrakto_popup_size" "90%")
 	popup_width=$(echo $popup_size | cut -d',' -f1)
 	popup_height=$(echo $popup_size | cut -d',' -f2)
 
-	popup_position=$(get_option "@extrakto_popup_position" "C")
 	popup_x=$(echo $popup_position | cut -d',' -f1)
 	popup_y=$(echo $popup_position | cut -d',' -f2)
 
@@ -49,7 +52,6 @@ if [ "$split_direction" = "p" ]; then
 	done
 	exit $rc
 else
-	split_size=$(get_option "@extrakto_split_size" 7)
 	tmux split-window \
 		-${split_direction} \
 		$extra_options \
