@@ -6,7 +6,8 @@ script_dir=$(
 	pwd
 )
 . "$script_dir/helpers.sh"
-extrakto="$script_dir/../extrakto_plugin.py"
+python_bin="$HOME/.pyenv/versions/anaconda3-2023.09-0/bin/python3"
+extrakto="$python_bin $script_dir/../extrakto_plugin.py"
 
 pane_id=$1
 split_direction=$(get_option "@extrakto_split_direction" "a")
@@ -37,6 +38,7 @@ if [ "$split_direction" = "p" ]; then
 	rc=129
 	while [ $rc -eq 129 ]; do
 		tmux popup \
+			-B \
 			-w "${popup_width}" \
 			-h "${popup_height:-${popup_width}}" \
 			-x "${popup_x}" \

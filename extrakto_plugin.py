@@ -37,7 +37,8 @@ DEFAULT_OPTIONS = {
     "@extrakto_edit_key": "ctrl-e",
     "@extrakto_filter_key": "ctrl-f",
     "@extrakto_filter_order": "word all line",
-    "@extrakto_fzf_header": "i c o e f g h",
+    "@extrakto_fzf_header": "i c o e q s p f g h",
+    "@extrakto_path_key": "ctrl-p",
     "@extrakto_fzf_layout": "default",
     "@extrakto_fzf_tool": "fzf",
     "@extrakto_fzf_unset_default_opts": "true",
@@ -48,17 +49,38 @@ DEFAULT_OPTIONS = {
     "@extrakto_insert_key": "tab",
     "@extrakto_open_key": "ctrl-o",
     "@extrakto_open_tool": "auto",
+    "@extrakto_quote_key": "ctrl-q",
+    "@extrakto_squote_key": "ctrl-s",
     "@extrakto_alt": "all",
     "@extrakto_prefix_name": "all",
 }
 
 
-def get_option_only(option):
-    return (
-        subprocess.check_output(["tmux", "show-option", "-gqv", option])
-        .decode("utf-8")
-        .strip()
+def get_all_extrakto_options():
+    """Batch-read all @extrakto_* tmux options in a single subprocess call."""
+    raw = subprocess.check_output(
+        ["tmux", "show-options", "-g"],
+        universal_newlines=True,
     )
+    options = {}
+    for line in raw.splitlines():
+        if line.startswith("@extrakto_"):
+            key, _, value = line.partition(" ")
+            # tmux may quote values with spaces
+            if value.startswith('"') and value.endswith('"'):
+                value = value[1:-1]
+            options[key] = value
+    return options
+
+
+_tmux_options = None
+
+
+def get_option_only(option):
+    global _tmux_options
+    if _tmux_options is None:
+        _tmux_options = get_all_extrakto_options()
+    return _tmux_options.get(option, "")
 
 
 def get_option(option):
@@ -80,28 +102,20 @@ def fzf_sel(command, data):
     return res[:-1]
 
 
-def get_cap(sel_filter, data):
+def get_cap(sel_filter, data, *, extrakto_all, extrakto_any):
 
-    extrakto = None
     res = []
     run_list = []
-    alt = get_option("@extrakto_alt")
-    prefix_name = get_option("@extrakto_prefix_name")
 
     if sel_filter == "all":
-        extrakto = Extrakto(
-            alt=(True if alt != "none" else False),
-            prefix_name=(True if prefix_name != "none" else False),
-        )
-        run_list = extrakto.all()
+        run_list = extrakto_all.all()
+        extrakto = extrakto_all
     elif sel_filter == "line":
         res += get_lines(data)
+        extrakto = None
     else:
-        extrakto = Extrakto(
-            alt=(True if alt == "any" else False),
-            prefix_name=(True if prefix_name == "any" else False),
-        )
         run_list = [sel_filter]
+        extrakto = extrakto_any
 
     for name in run_list:
         res += extrakto[name].filter(data)
@@ -137,8 +151,21 @@ class ExtraktoPlugin:
         self.insert_key = get_option("@extrakto_insert_key")
         self.open_key = get_option("@extrakto_open_key")
         self.open_tool = get_option("@extrakto_open_tool")
+        self.path_key = get_option("@extrakto_path_key")
+        self.quote_key = get_option("@extrakto_quote_key")
+        self.squote_key = get_option("@extrakto_squote_key")
         self.alt = get_option("@extrakto_alt")
         self.prefix_name = get_option("@extrakto_prefix_name")
+
+        # pre-create Extrakto instances so get_cap doesn't re-parse config each time
+        self.extrakto_all = Extrakto(
+            alt=(self.alt != "none"),
+            prefix_name=(self.prefix_name != "none"),
+        )
+        self.extrakto_any = Extrakto(
+            alt=(self.alt == "any"),
+            prefix_name=(self.prefix_name == "any"),
+        )
 
         self.original_grab_area = self.grab_area
 
@@ -333,6 +360,14 @@ class ExtraktoPlugin:
                     )
             elif o == "e":
                 header_tmpl += f"{COLORS['BOLD']}{self.edit_key}{COLORS['OFF']}=edit"
+            elif o == "q":
+                header_tmpl += f"{COLORS['BOLD']}{self.quote_key}{COLORS['OFF']}=quote"
+            elif o == "s":
+                header_tmpl += (
+                    f"{COLORS['BOLD']}{self.squote_key}{COLORS['OFF']}=squote"
+                )
+            elif o == "p":
+                header_tmpl += f"{COLORS['BOLD']}{self.path_key}{COLORS['OFF']}=path"
             elif o == "f":
                 header_tmpl += f"{COLORS['BOLD']}{self.filter_key}{COLORS['OFF']}=filter [{COLORS['YELLOW']}{COLORS['BOLD']}:filter:{COLORS['OFF']}]"
             elif o == "g":
@@ -362,14 +397,16 @@ class ExtraktoPlugin:
                     f"--query={query}",
                     f"--header={header}",
                     f"--expect=ctrl-c,ctrl-g,esc",
-                    f"--expect={self.insert_key},{self.copy_key},{self.filter_key},{self.edit_key},{self.open_key},{self.grab_key},{self.help_key},{self.clip_mode_key}",
+                    f"--expect={self.insert_key},{self.copy_key},{self.filter_key},{self.edit_key},{self.quote_key},{self.squote_key},{self.path_key},{self.open_key},{self.grab_key},{self.help_key},{self.clip_mode_key}",
                     "--tiebreak=index",
                     f"--layout={self.fzf_layout}",
                     "--no-info",
                 ]
                 query, key, *selection = fzf_sel(
                     fzf_cmd,
-                    get_cap(sel_filter, self.capture_panes()),
+                    get_cap(sel_filter, self.capture_panes(),
+                           extrakto_all=self.extrakto_all,
+                           extrakto_any=self.extrakto_any),
                 )
             except Exception as e:
                 msg = (
@@ -412,6 +449,12 @@ class ExtraktoPlugin:
                 return 0
             elif key == self.filter_key:
                 sel_filter = self.next_filter[sel_filter]
+            elif key == self.quote_key:
+                sel_filter = "quote"
+            elif key == self.squote_key:
+                sel_filter = "s-quote"
+            elif key == self.path_key:
+                sel_filter = "path"
             elif key == self.clip_mode_key:
                 self.clip_mode = self.next_clip_mode[self.clip_mode]
             elif key == self.grab_key:
