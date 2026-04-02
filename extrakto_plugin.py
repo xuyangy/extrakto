@@ -245,7 +245,7 @@ class ExtraktoPlugin:
                 break
 
         if area == "recent":
-            capture_start = "-10"
+            capture_start = "-200"
         elif area == "full":
             history_limit = get_option("@extrakto_history_limit")
             capture_start = f"-{history_limit}"
