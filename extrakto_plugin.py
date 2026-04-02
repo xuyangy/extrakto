@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 from collections import OrderedDict
 
@@ -86,11 +86,16 @@ def get_option(option):
     return DEFAULT_OPTIONS[option] if option in DEFAULT_OPTIONS else ""
 
 
-def fzf_sel(command, data):
+def fzf_sel(command, lines):
     p = subprocess.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None
     )
-    p.stdin.write(data.encode("utf-8") + b"\n")
+    try:
+        for line in lines:
+            p.stdin.write(line.encode("utf-8") + b"\n")
+            p.stdin.flush()
+    except BrokenPipeError:
+        pass
     p.stdin.close()
     p.wait()
     res = p.stdout.read().decode("utf-8").split("\n")
@@ -98,29 +103,28 @@ def fzf_sel(command, data):
     return res[:-1]
 
 
-def get_cap(sel_filter, data, *, extrakto_all, extrakto_any):
+def get_cap(sel_filter, chunks, *, extrakto_all, extrakto_any):
+    seen = set()
+    any_match = False
 
-    res = []
-    run_list = []
+    for data in chunks:
+        if sel_filter == "line":
+            res = get_lines(data)
+        elif sel_filter == "all":
+            res = []
+            for name in extrakto_all.all():
+                res += extrakto_all[name].filter(data)
+        else:
+            res = extrakto_any[sel_filter].filter(data)
 
-    if sel_filter == "all":
-        run_list = extrakto_all.all()
-        extrakto = extrakto_all
-    elif sel_filter == "line":
-        res += get_lines(data)
-        extrakto = None
-    else:
-        run_list = [sel_filter]
-        extrakto = extrakto_any
+        for item in reversed(res):
+            if item not in seen:
+                seen.add(item)
+                yield item
+                any_match = True
 
-    for name in run_list:
-        res += extrakto[name].filter(data)
-
-    if not res:
-        res = ["NO MATCH - use a different filter"]
-
-    res.reverse()
-    return "\n".join([s for s in OrderedDict.fromkeys(res)])
+    if not any_match:
+        yield "NO MATCH - use a different filter"
 
 
 class ExtraktoPlugin:
@@ -256,7 +260,7 @@ class ExtraktoPlugin:
     def capture_panes(self):
         capture_pane_start = self.get_capture_pane_start()
 
-        # collect (pane_id, socket) tasks
+        # collect (pane_id, socket) tasks for non-trigger panes
         tasks = []
 
         if self.grab_area.startswith("all "):
@@ -293,20 +297,18 @@ class ExtraktoPlugin:
             except subprocess.CalledProcessError:
                 pass  # socket not running, skip silently
 
-        # capture all non-trigger panes in parallel, trigger pane last
-        results = {}
-        if tasks:
-            with ThreadPoolExecutor() as executor:
-                futures = {
-                    executor.submit(self.capture_pane, pane_id, capture_pane_start, socket): i
-                    for i, (pane_id, socket) in enumerate(tasks)
-                }
-                for future in as_completed(futures):
-                    results[futures[future]] = future.result()
-
-        captured = "".join(results[i] + "\n" for i in sorted(results))
-        captured += self.capture_pane(self.trigger_pane, capture_pane_start)
-        return captured
+        # stream captures: trigger pane first, others in original list order
+        with ThreadPoolExecutor() as executor:
+            trigger_future = executor.submit(
+                self.capture_pane, self.trigger_pane, capture_pane_start
+            )
+            other_futures = [
+                executor.submit(self.capture_pane, pane_id, capture_pane_start, socket)
+                for pane_id, socket in tasks
+            ]
+            yield trigger_future.result()
+            for future in other_futures:
+                yield future.result()
 
     def capture_pane(self, pane, capture_pane_start, socket=None):
         tmux = ["tmux", "-L", socket] if socket else ["tmux"]
