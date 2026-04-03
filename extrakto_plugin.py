@@ -5,7 +5,6 @@ import subprocess
 import sys
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-
 from collections import OrderedDict
 
 from extrakto import Extrakto, get_lines
@@ -22,74 +21,12 @@ COLORS = {
     "BOLD": "\033[1m",
 }
 
-DEFAULT_OPTIONS = {
-    "@extrakto_clip_tool": "auto",
-    "@extrakto_clip_mode": "bg",
-    "@extrakto_clip_mode_order": "bg buffer",
-    "@extrakto_clip_mode_key": "ctrl-t",
-    "@extrakto_copy_key": "enter",
-    "@extrakto_edit_key": "ctrl-e",
-    "@extrakto_filter_key": "ctrl-f",
-    "@extrakto_filter_order": "word all line",
-    "@extrakto_fzf_header": "i c o e q s p l f g",
-    "@extrakto_path_key": "ctrl-p",
-    "@extrakto_fzf_layout": "default",
-    "@extrakto_fzf_tool": "fzf",
-    "@extrakto_fzf_unset_default_opts": "true",
-    "@extrakto_grab_area": "window full",
-    "@extrakto_grab_key": "ctrl-g",
-    "@extrakto_help_key": "",
-    "@extrakto_history_limit": "2000",
-    "@extrakto_insert_key": "tab",
-    "@extrakto_line_key": "ctrl-l",
-    "@extrakto_open_key": "ctrl-o",
-    "@extrakto_open_tool": "auto",
-    "@extrakto_quote_key": "ctrl-q",
-    "@extrakto_squote_key": "ctrl-s",
-    "@extrakto_alt": "all",
-    "@extrakto_prefix_name": "all",
-    "@extrakto_extra_sockets": "",
-}
-
-
-def get_all_extrakto_options():
-    """Batch-read all @extrakto_* tmux options in a single subprocess call."""
-    raw = subprocess.check_output(
-        ["tmux", "show-options", "-g"],
-        universal_newlines=True,
-    )
-    options = {}
-    for line in raw.splitlines():
-        if line.startswith("@extrakto_"):
-            key, _, value = line.partition(" ")
-            # tmux may quote values with spaces
-            if value.startswith('"') and value.endswith('"'):
-                value = value[1:-1]
-            options[key] = value
-    return options
-
-
-_tmux_options = None
-
-
-def get_option_only(option):
-    global _tmux_options
-    if _tmux_options is None:
-        _tmux_options = get_all_extrakto_options()
-    return _tmux_options.get(option, "")
-
-
-def get_option(option):
-    option_value = get_option_only(option)
-    if option_value:
-        return option_value
-    return DEFAULT_OPTIONS[option] if option in DEFAULT_OPTIONS else ""
-
 
 def fzf_sel(command, lines):
     p = subprocess.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None
     )
+    assert p.stdin is not None and p.stdout is not None
     try:
         for line in lines:
             p.stdin.write(line.encode("utf-8") + b"\n")
@@ -132,74 +69,48 @@ class ExtraktoPlugin:
     def __init__(self, trigger_pane, launch_mode):
         self.trigger_pane = trigger_pane
         self.launch_mode = launch_mode
-        # options; note some of the values can be overwritten by capture()
-        self.clip_tool = get_option("@extrakto_clip_tool")
-        self.clip_mode = get_option_only("@extrakto_clip_tool_run")  # legacy option
-        if not self.clip_mode:
-            self.clip_mode = get_option("@extrakto_clip_mode")
-        self.clip_mode_key = get_option("@extrakto_clip_mode_key")
-        self.copy_key = get_option("@extrakto_copy_key")
-        self.edit_key = get_option("@extrakto_edit_key")
-        self.editor = get_option("@extrakto_editor")
-        self.filter_key = get_option("@extrakto_filter_key")
-        self.fzf_header = get_option("@extrakto_fzf_header")
-        self.fzf_layout = get_option("@extrakto_fzf_layout")
-        self.fzf_tool = get_option("@extrakto_fzf_tool")
-        self.grab_area = get_option("@extrakto_grab_area")
-        self.grab_key = get_option("@extrakto_grab_key")
-        self.insert_key = get_option("@extrakto_insert_key")
-        self.line_key = get_option("@extrakto_line_key")
-        self.open_key = get_option("@extrakto_open_key")
-        self.open_tool = get_option("@extrakto_open_tool")
-        self.path_key = get_option("@extrakto_path_key")
-        self.quote_key = get_option("@extrakto_quote_key")
-        self.squote_key = get_option("@extrakto_squote_key")
-        self.alt = get_option("@extrakto_alt")
-        self.prefix_name = get_option("@extrakto_prefix_name")
-        extra_sockets_str = get_option("@extrakto_extra_sockets")
-        self.extra_sockets = extra_sockets_str.split() if extra_sockets_str else []
 
-        # pre-create Extrakto instances so get_cap doesn't re-parse config each time
-        self.extrakto_all = Extrakto(
-            alt=(self.alt != "none"),
-            prefix_name=(self.prefix_name != "none"),
-        )
-        self.extrakto_any = Extrakto(
-            alt=(self.alt == "any"),
-            prefix_name=(self.prefix_name == "any"),
-        )
+        self.clip_tool = "pbcopy"
+        self.clip_mode = "bg"
+        self.clip_mode_key = "ctrl-t"
+        self.copy_key = "tab"
+        self.edit_key = "ctrl-e"
+        self.editor = os.environ.get("EDITOR", "vi")
+        self.filter_key = "ctrl-f"
+        self.fzf_header = "i c o e q s p l f g"
+        self.fzf_layout = "reverse"
+        self.fzf_tool = "fzf"
+        self.grab_area = "all full"
+        self.grab_key = "ctrl-g"
+        self.insert_key = "enter"
+        self.line_key = "ctrl-l"
+        self.open_key = "ctrl-o"
+        self.open_tool = "open"
+        self.path_key = "ctrl-p"
+        self.quote_key = "ctrl-q"
+        self.squote_key = "ctrl-s"
+        self.alt = "all"
+        self.prefix_name = "all"
+        self.extra_sockets = ["tokyo", "seafoam"]
+
+        self.extrakto_all = Extrakto(alt=True, prefix_name=True)
+        self.extrakto_any = Extrakto(alt=False, prefix_name=False)
 
         self.original_grab_area = self.grab_area
 
-        filter_order = get_option("@extrakto_filter_order").split(" ")
+        filter_order = "word path quote s-quote url line all".split()
         self.next_filter = self.prep_cycle(filter_order)
-        # get initial mode passed from cli
         self.next_filter["initial"] = (
             os.environ.get("extrakto_inital_mode", "").strip() or filter_order[0]
         )
 
-        # clip mode order (for cycling with clip_mode_key)
-        clip_mode_order = get_option("@extrakto_clip_mode_order").split(" ")
+        clip_mode_order = "bg buffer".split()
         self.next_clip_mode = self.prep_cycle(clip_mode_order)
-        if self.clip_mode not in self.next_clip_mode:
-            self.next_clip_mode[self.clip_mode] = clip_mode_order[0]
 
-        # avoid side effects from FZF_DEFAULT_OPTS
-        if get_option("@extrakto_fzf_unset_default_opts") == "true":
-            os.environ.pop("FZF_DEFAULT_OPTS", None)
-            os.environ.pop("FZF_DEFAULT_OPTS_FILE", None)
-
-        if self.clip_tool == "auto":
-            self.clip_tool = "pbcopy"
-
-        if self.open_tool == "auto":
-            self.open_tool = "open"
-
-        if not self.editor:
-            self.editor = os.environ.get("EDITOR", "vi")
+        os.environ.pop("FZF_DEFAULT_OPTS", None)
+        os.environ.pop("FZF_DEFAULT_OPTS_FILE", None)
 
         if launch_mode != "popup":
-            # check terminal size, zoom pane if too small
             lines = os.get_terminal_size().lines
             if lines < 7:
                 subprocess.run("tmux resize-pane -Z", shell=True)
@@ -213,16 +124,13 @@ class ExtraktoPlugin:
 
     def copy(self, text):
         if self.clip_mode == "fg":
-            # run in foreground as OSC-52 copying won't work otherwise
             subprocess.run(["tmux", "set-buffer", "--", text], check=True)
             subprocess.run(
                 ["tmux", "run-shell", f"tmux show-buffer|{self.clip_tool}"], check=True
             )
         elif self.clip_mode == "tmux_osc52":
-            # use native tmux 3.2 OSC 52 functionality
             subprocess.run(["tmux", "set-buffer", "-w", "--", text], check=True)
         elif self.clip_mode == "buffer":
-            # only save to tmux buffer, no clipboard
             subprocess.run(["tmux", "set-buffer", "--", text], check=True)
         else:
             # run in background as xclip won't work otherwise
@@ -239,23 +147,19 @@ class ExtraktoPlugin:
                 check=True,
             )
 
-    # this returns the start point parameter for `tmux capture-pane`.
     def get_capture_pane_start(self):
         area = self.grab_area
-        # strip scope prefix to get the size part
         for prefix in ("all ", "session ", "window "):
             if area.startswith(prefix):
                 area = area[len(prefix):]
                 break
 
         if area == "recent":
-            capture_start = "-200"
+            return "-200"
         elif area == "full":
-            history_limit = get_option("@extrakto_history_limit")
-            capture_start = f"-{history_limit}"
+            return "-2000"
         else:
-            capture_start = f"-{area}"
-        return capture_start
+            return f"-{area}"
 
     def capture_panes(self):
         capture_pane_start = self.get_capture_pane_start()
@@ -282,8 +186,6 @@ class ExtraktoPlugin:
             ).split("\n")
             tasks += [
                 (p[2:], None) for p in panes
-                # exclude the active (for split) and trigger panes
-                # in popup mode the active and trigger panes are the same
                 if p.startswith("0:") and p[2:] != self.trigger_pane
             ]
 
@@ -335,21 +237,15 @@ class ExtraktoPlugin:
                 ]
 
                 if pane_in_mode == 1:
-                    # In copy-mode, "recent" should follow the currently visible viewport.
                     start = int(capture_pane_start) - scroll_position
                     end = (pane_height - 1) - scroll_position
                     command = tmux + [
-                        "capture-pane",
-                        "-pJ",
-                        "-S",
-                        str(start),
-                        "-E",
-                        str(end),
-                        "-t",
-                        pane,
+                        "capture-pane", "-pJ",
+                        "-S", str(start),
+                        "-E", str(end),
+                        "-t", pane,
                     ]
             except (ValueError, subprocess.CalledProcessError):
-                # If formats are unavailable, fall back to regular recent capture.
                 pass
 
         return subprocess.check_output(
@@ -459,6 +355,7 @@ class ExtraktoPlugin:
             )
 
             # for troubleshooting add `tee /tmp/stageN | ` between the commands
+            fzf_cmd = []
             try:
                 fzf_cmd = [
                     self.fzf_tool,
@@ -470,6 +367,12 @@ class ExtraktoPlugin:
                     "--tiebreak=index",
                     f"--layout={self.fzf_layout}",
                     "--no-info",
+                    "--color", "fg:#D8DEE9,bg:#2E3440,hl:#A3BE8C,fg+:#D8DEE9,bg+:#434C5E,hl+:#A3BE8C",
+                    "--color", "pointer:#BF616A,info:#4C566A,spinner:#4C566A,header:#4C566A,prompt:#81A1C1,marker:#EBCB8B",
+                    "--border=none",
+                    "--height=100%",
+                    "--preview-window=top:30%",
+                    "--preview=if [[ -d {} ]]; then exa --color always -T {}; elif [[ -f {} ]]; then bat --color always --paging never {}; else echo {}; fi",
                 ]
                 query, key, *selection = fzf_sel(
                     fzf_cmd,
@@ -477,7 +380,7 @@ class ExtraktoPlugin:
                            extrakto_all=self.extrakto_all,
                            extrakto_any=self.extrakto_any),
                 )
-            except Exception as e:
+            except Exception:
                 msg = (
                     str(fzf_cmd)
                     + "\n"
@@ -493,9 +396,6 @@ class ExtraktoPlugin:
                     self.copy(msg)
                 sys.exit(0)
 
-            # selection will be without or with the filter name prefixing the entry
-            # "example quoted text here"
-            # quote: "example quoted text here"
             text = ""
             if (
                 self.prefix_name == "all" and sel_filter == "all"
@@ -529,9 +429,6 @@ class ExtraktoPlugin:
             elif key == self.clip_mode_key:
                 self.clip_mode = self.next_clip_mode[self.clip_mode]
             elif key == self.grab_key:
-                # cycle: recent -> window recent -> session recent -> all recent
-                #     -> full -> window full -> session full -> all full
-                #     -> custom (if any) -> recent ...
                 grab_cycle = ["recent"]
                 if not self.has_single_pane():
                     grab_cycle.append("window recent")
@@ -539,7 +436,6 @@ class ExtraktoPlugin:
                 if not self.has_single_pane():
                     grab_cycle.append("window full")
                 grab_cycle.extend(["session full", "all full"])
-                # append custom grab area if it's not one of the standard ones
                 if not self.original_grab_area.startswith(
                     ("window ", "session ", "all ", "recent", "full")
                 ):

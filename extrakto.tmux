@@ -9,7 +9,7 @@ script_dir=$(
 . "$script_dir/scripts/helpers.sh"
 
 extrakto_open="$script_dir/scripts/open.sh"
-extrakto_key=$(get_option "@extrakto_key" "tab")
+extrakto_key="space"
 
 lowercase_key=$(echo $extrakto_key | tr '[:upper:]' '[:lower:]')
 
