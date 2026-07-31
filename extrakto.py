@@ -108,11 +108,12 @@ class FilterDef:
     ):
         self.extrakto = extrakto
         self.name = name
-        self.regex = regex
-        self.exclude = exclude
+        # compile once: with the "all" filter these run per filter per pane
+        self.regex = re.compile(regex, flags=re.I)
+        self.exclude = re.compile(exclude, re.I) if exclude else None
         self.lstrip = lstrip
         self.rstrip = rstrip
-        self.alt = alt
+        self.alt = [re.compile(a) for a in alt]
         self.min_length = min_length
 
     def filter(self, text):
@@ -122,7 +123,7 @@ class FilterDef:
         else:
             add = lambda name, value: res.append(value)
 
-        for m in re.finditer(self.regex, "\n" + text, flags=re.I):
+        for m in self.regex.finditer("\n" + text):
             item = "".join(filter(None, m.groups()))
 
             # strip invalid characters (like punctuation or markdown syntax)
@@ -132,12 +133,12 @@ class FilterDef:
                 item = item.rstrip(self.rstrip)
 
             if len(item) >= self.min_length:
-                if not self.exclude or not re.search(self.exclude, item, re.I):
+                if not self.exclude or not self.exclude.search(item):
                     if self.extrakto.alt:
                         for i, altre in enumerate(self.alt):
-                            m = re.search(altre, item)
-                            if m:
-                                add(f"{self.name}{i+2}", m[1])
+                            alt_m = altre.search(item)
+                            if alt_m:
+                                add(f"{self.name}{i+2}", alt_m[1])
                     add(self.name, item)
         return res
 
@@ -177,7 +178,14 @@ def main(parser):
         run_list = extrakto.all()
 
     if args.lines:
-        res += get_lines(text, min_length=args.min_length, prefix_name=args.name)
+        # -m is optional, but get_lines needs a real number to compare against
+        res += get_lines(
+            text,
+            min_length=(
+                args.min_length if args.min_length is not None else MIN_LENGTH_DEFAULT
+            ),
+            prefix_name=args.name,
+        )
 
     for name in run_list:
         res += extrakto[name].filter(text)

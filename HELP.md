@@ -6,6 +6,7 @@ Extrakto uses fzf. You only need to type a few keys to find your selection with 
 
 - Press *ctrl-f* to change to the next filter mode (*filter_key*)
   - *word*, the default filter allows you to select words (default min length=5)
+  - *path-line*, grep/compiler locations like `src/main.py:42` or `src/main.py:42:13`
   - *all*, runs all(*) filters and allows you select quotes, url, paths, etc. \
     You can define your own filters as well as selecting which are included in \
     the all selection (see extrakto.conf).
@@ -24,21 +25,34 @@ Extrakto uses fzf. You only need to type a few keys to find your selection with 
   - *buffer*: only save to tmux buffer (paste with prefix + ])
   - *tmux_osc52*: copy to remote clipboard (useful over SSH)
 
+- Press *ctrl-r* to re-capture the panes, keeping your query and filter \
+  (*refresh_key*). Captures are cached, so this is how you pick up output that \
+  appeared after the picker opened.
+
 - Press *esc* or *ctrl-c* to cancel
 
 - Use *shift-tab* to select multiple entries.
 
 Actions that use the current selection:
 
-- Press *tab* to insert the selection into the active tmux pane (*insert_key*).
+- Press *enter* to insert the selection into the active tmux pane (*insert_key*).
 
-- Press *enter* to copy the selection to the clipboard (*copy_key*).
+- Press *tab* to copy the selection to the clipboard (*copy_key*).
 
 - Press *ctrl-o* to pass the selection to the *open* command of your OS (*open_key*). \
   For example if you select a URL this will open the browser.
 
+- Press *ctrl-j* to jump to the pane the selection came from (*jump_key*). \
+  Every candidate remembers its pane; if the same text appears in several panes \
+  you get the closest one, because the pane you started from is captured first. \
+  Panes on another tmux server cannot be jumped to.
+
 - Press *ctrl-e* to open the selection in your $EDITOR (*edit_key*). \
   This only makes sense if you select a path and if you are currently in a shell. \
-  extrakto will send the command to launch the editor to your active pane.
+  extrakto will send the command to launch the editor to your active pane. \
+  If the selection is a `file:line` location and the file exists, the editor is \
+  opened at that line (`$EDITOR +42 -- file`). Relative paths are resolved against \
+  the working directory of the pane the text came from, so a grep hit from another \
+  pane still opens the right file.
 
 You can change most keys, define your own filters and change other configuration options. Please see the GitHub readme for instructions.

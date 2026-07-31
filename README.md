@@ -1,227 +1,151 @@
-# extrakto for tmux
+# extrakto for tmux (personal fork)
 
-{ repos & mirrors: [github.com/laktak/extrakto](https://github.com/laktak/extrakto/), [codeberg.org/laktak/extrakto](https://codeberg.org/laktak/extrakto) }
+A personal, macOS-only fork of [laktak/extrakto](https://github.com/laktak/extrakto/).
 
-![intro](https://github.com/laktak/extrakto/wiki/assets/intro2.gif)
+**Output completions** — complete commands using text that is already on the screen,
+without retyping it. Works everywhere, including remote ssh sessions.
 
-**Output completions** - you can complete commands that require you to retype text that is already on the screen. This works everywhere, even in remote ssh sessions.
-
-You can **fuzzy find your text** instead of selecting it by hand:
-
-- press tmux `prefix + tab` to start extrakto
+- press tmux `prefix + space` to start extrakto
 - fuzzy find the text/path/url/line
-- use custom filters (`ctrl + f`)
-- press
-  - `tab` to insert it to the current pane,
-  - `enter` to copy it to the clipboard,
-- see other features in [HELP](HELP.md)
+- press `enter` to insert it into the pane, `tab` to copy it to the clipboard
 
-Use it for paths, URLs, options from a man page, git hashes, docker container names, ...
+Use it for paths, URLs, options from a man page, git hashes, docker container
+names, grep hits, ...
 
+> **This fork is not configurable.** Upstream reads ~20 `@extrakto_*` tmux options
+> at startup; that was removed for launch latency. Everything below is hardcoded in
+> `extrakto_plugin.py` and `scripts/open.sh` — to change behaviour, edit the source.
+> Filters are the exception: those are still read from `extrakto.conf`.
 
-- [Requirements](#requirements)
-- [Installation](#installation)
-  - [Using Tmux Plugin Manager](#using-tmux-plugin-manager)
-  - [Manual Method](#manual-method)
-- [Wiki](#wiki)
-- [Options](#options)
-  - [Common Options](#common-options)
-  - [Keys](#keys)
-  - [Advanced Options](#advanced-options)
-  - [Using skim instead of fzf](#using-skim-instead-of-fzf)
-  - [Examples](#examples)
-  - [Custom Tmux Keybindings](#custom-tmux-keybindings)
-- [Custom Filters](#custom-filters)
+- [Keys](#keys)
+- [Filters](#filters)
+- [Behaviour](#behaviour)
+- [How it works](#how-it-works)
+- [Custom filters](#custom-filters)
 - [CLI tool](#cli-tool)
-  - [Installation](#installation)
-  - [Usage](#usage)
-- [Contributions](#contributions)
 
+## Keys
 
-## Requirements
+| Key      | Action |
+| :---     | :--- |
+| `enter`  | insert the selection into the pane you came from |
+| `tab`    | copy the selection to the clipboard |
+| `ctrl-f` | next filter mode |
+| `ctrl-l` | jump to the *line* filter |
+| `ctrl-p` | jump to the *path* filter |
+| `ctrl-q` | jump to the *quote* filter |
+| `ctrl-s` | jump to the *s-quote* filter |
+| `ctrl-g` | cycle the grab area |
+| `ctrl-t` | cycle the clipboard mode (`bg` → `buffer`) |
+| `ctrl-r` | re-capture the panes, keeping the current query and filter |
+| `ctrl-j` | jump to the pane the selection came from |
+| `ctrl-o` | pass the selection to `open` |
+| `ctrl-e` | open the selection in `$EDITOR` |
+| `esc` / `ctrl-c` | cancel |
 
-<a href="https://github.com/laktak/tome"><img src="https://github.com/laktak/tome/wiki/assets/clippy_tome.gif" align="right" alt="clippy" width="265" height="349"></a>
+Note `enter`/`tab` are swapped relative to upstream. Use `shift-tab` to select
+multiple entries.
 
-- [tmux](https://github.com/tmux/tmux) - popups require 3.2, otherwise extrakto will open in a split window.
-- [fzf](https://github.com/junegunn/fzf) or [skim](https://github.com/skim-rs/skim) (see below)
-- Python 3.6+
-- a posix shell like Bash
-- optionally [Tmux Plugin Manager](https://github.com/tmux-plugins/tpm)
+`ctrl-e` understands `file:line` and `file:line:col` locations: if the file part
+exists it runs `$EDITOR +42 -- file`. `ctrl-o` strips the `:line` suffix.
 
-Supported clipboards:
+## Filters
 
-- Linux Xorg (xclip) and Wayland (wl-copy)
-- macOS (pbcopy)
-- WSL
-- *bring your own*, see the [Wiki](https://github.com/laktak/extrakto/wiki/) for examples (like termux)
+`ctrl-f` cycles: `word` → `path` → `path-line` → `quote` → `s-quote` → `url` →
+`line` → `all`.
 
+| Filter      | Matches |
+| :---        | :--- |
+| `word`      | anything not whitespace/brackets (the default) |
+| `path`      | file and directory paths |
+| `path-line` | grep/compiler locations: `src/main.py:42`, `src/main.py:42:13`, `Makefile:12` |
+| `url`       | http, git, ssh, ftp, file URLs |
+| `quote`     | `"double quoted"` strings |
+| `s-quote`   | `'single quoted'` strings |
+| `line`      | whole lines |
+| `all`       | every filter with `in_all` at once, each result prefixed with its filter name |
 
-## Installation
+`~/.config/extrakto/extrakto.conf` currently adds `emails` and `ips`, and raises
+`min_length` to 10 for `word` and 15 for `path`/`url`. The `path` limit is high
+enough to drop short paths like `src/main.py` — lower it there if that bites.
 
-### Using Tmux Plugin Manager
+## Behaviour
 
-Add the plugin to the list of TPM plugins in `.tmux.conf`:
+| | |
+| :--- | :--- |
+| launcher | `tmux popup`, 60% × 60%, centred |
+| grab area at startup | `all full` — every pane on every server below |
+| tmux servers scanned | default, plus the `tokyo` and `seafoam` sockets |
+| `recent` | last 200 lines per pane |
+| `full` | last 2000 lines per pane |
+| clipboard | `/usr/bin/pbcopy`, fed directly |
+| open | `/usr/bin/open`, invoked from the plugin process |
+| fzf | `/usr/local/bin/fzf` |
+| preview | `eza` for directories, `bat` for files |
+| python | the anaconda build pinned in `scripts/open.sh` |
 
-    set -g @plugin 'laktak/extrakto'
+`ctrl-g` cycles the grab area through `recent`, `window recent`, `session recent`,
+`all recent`, `full`, `window full`, `session full`, `all full`. The `window`
+entries are skipped when the window has only one pane.
 
-Hit `prefix + I` to fetch the plugin and source it. You can use `prefix + U` to update all plugins.
+Panes that are closed while being captured are skipped rather than aborting the
+picker, and tmux servers that are not running are probed once and then ignored.
 
-You should now have all `extrakto` key bindings defined.
+## How it works
 
+- `extrakto.tmux` binds `prefix + space` to `scripts/open.sh`.
+- `scripts/open.sh` opens a tmux popup running `extrakto_plugin.py <pane> popup`.
+- The plugin captures panes in a thread pool — the pane you started from first, so
+  it streams into fzf while the rest are still being captured — and pipes
+  candidates in.
+- **fzf is launched once.** Filter, grab, clip-mode and refresh keys are fzf
+  `transform` bindings that re-invoke the plugin as `--transform`; it mutates the
+  shared state and prints `reload-sync(...)` / `change-header(...)` back to fzf.
+  Your query survives, and nothing is re-captured on a filter change.
+- Items are identified by their token (`--id-nth=1`), so multi-select marks are
+  carried across a reload for candidates that still exist afterwards — which in
+  practice means `ctrl-r`. A filter change produces a different set of tokens, so
+  there is nothing for the marks to attach to and they go away.
+- Captures are cached per grab area in a temp state dir, so only `ctrl-g` and
+  `ctrl-r` cause new `capture-pane` calls. Metadata and text live in one file that
+  is replaced atomically under a pid-tagged temp name, because a reload child can
+  be writing the same cache while the first capture is still streaming. The dir is
+  removed on exit.
+- Each candidate is emitted as `token<US>pane_id<US>socket<US>cwd`; fzf displays and
+  matches field 1 only, but returns the whole line. `ctrl-j` uses the pane, and
+  `ctrl-e`/`ctrl-o` resolve relative paths against the cwd of the pane the text was
+  captured from — not the directory extrakto happens to be running in.
 
-### Manual Method
+## Custom filters
 
-Clone the repo:
+Define your own in `~/.config/extrakto/extrakto.conf`:
 
-    $ git clone https://github.com/laktak/extrakto ~/clone/path
-
-Add this line to the bottom of `.tmux.conf`:
-
-    run-shell ~/clone/path/extrakto.tmux
-
-Reload the tmux environment:
-
-    # type this in terminal
-    $ tmux source-file ~/.tmux.conf
-
-You should now have all `extrakto` key bindings defined.
-
-
-## Wiki
-
-Add or look for special requirements and tips in our [wiki](https://github.com/laktak/extrakto/wiki).
-
-
-## Options
-
-You can set any of these options by adding them to your `~/.tmux.conf` file:
-
-```
-set -g <option> "<value>"
-```
-
-Where `<option>` and `<value>` correspond to one of the options specified below
-
-### Common Options
-
-| Option                                | Default         | Description |
-| :---                                  | :---:           | :--- |
-| `@extrakto_grab_area`                 | `window full`   | Whether you want extrakto to grab data from the `recent` area, the `full` pane, all current window's (`window recent`) areas or all current window's (`window full`) panes. You can also set this option to any number you want (or number preceded by "window ", e.g. "window 500"), this allows you to grab a smaller amount of data from the pane(s) than the pane's limit. For instance, you may have a really big limit for tmux history but using the same limit may end up on having slow performance on Extrakto. |
-| `@extrakto_filter_order`              | `word all line` | Filter modes order. The first listed mode will be the default when opening extrakto. You may use `word`, `line`, `path`, `url`, `quote`, `s-quote` or any of your own filters separated by a space. `all` applies all filters at the same time. |
-
-### Keys
-
-| Option                                | Default         | Description |
-| :---                                  | :---:           | :--- |
-| `@extrakto_key`                       | `tab`           | The key binding to start. If you have any special requirements (like a custom key table) set this to 'none'. See "Custom Tmux Keybindings". |
-| `@extrakto_copy_key`                  | `enter`         | Key to copy selection to clipboard. |
-| `@extrakto_insert_key`                | `tab`           | Key to insert selection. |
-| `@extrakto_filter_key`                | `ctrl-f`        | Key to toggle filter mode (see `@extrakto_filter_order`). |
-| `@extrakto_line_key`                  | `ctrl-l`        | Key to switch directly to the line filter. |
-| `@extrakto_grab_key`                  | `ctrl-g`        | Key to toggle grab mode. |
-| `@extrakto_edit_key`                  | `ctrl-e`        | Key to run the editor. |
-| `@extrakto_open_key`                  | `ctrl-o`        | Key to run the open command. |
-| `@extrakto_clip_mode_key`             | `ctrl-t`        | Key to cycle clipboard mode (see `@extrakto_clip_mode_order`). |
-
-All but `@extrakto_key` are controlled by fzf and must follow its conventions.
-
-### Advanced Options
-
-| Option                                | Default         | Description |
-| :---                                  | :---:           | :--- |
-| `@extrakto_clip_mode`                 | `bg`            | Set this to `tmux_osc52` to enable [remote clipboard support](https://github.com/laktak/extrakto/wiki/Remote-Copy-via-OSC52), `fg`/`bg` to have your clipboard tool run in a foreground/background shell, or `buffer` to only save to tmux buffer without copying to the clipboard. |
-| `@extrakto_clip_mode_order`           | `bg buffer`     | Order of clipboard modes to cycle through with `@extrakto_clip_toggle_key`. Omit modes you don't want in the cycle. Specify any mode of `@extrakto_clip_mode`. |
-| `@extrakto_clip_tool`                 | `auto`          | Set this to whatever clipboard tool you would like extrakto to use to copy data into your clipboard. `auto` will try to choose the correct clipboard for your platform. |
-| `@extrakto_editor`                    |                 | This defaults to `$EDITOR` if not set. |
-| `@extrakto_fzf_layout`                |`default`        | Control the fzf layout which is "bottom-up" by default. If you prefer "top-down" layout instead set this to `reverse`. In fact, this value is passed to the fzf `--layout` parameter. Possible values are: `default`, `reverse` and `reverse-list` |
-| `@extrakto_fzf_tool`                  | `fzf`           | Set this to path of fzf if it can't be found in your `PATH`. If you prefer skim you need to set this option to `sk` or its full path. |
-| `@extrakto_fzf_header`                | `i c o e q s p l f g` | Define the fzf header to show keys for insert, copy, open, edit, quote, squote, path, line, filter and grab. Not shown by default: m=clip mode. You can add, reorder or omit information you don't need.|
-| `@extrakto_fzf_unset_default_opts`    | `true`          | Unsets custom FZF_DEFAULT_OPTS as it can potentially cause problems in extrakto operations |
-| `@extrakto_open_tool`                 | `auto`          | Set this to path of your own tool or `auto` to use your platforms *open* implementation. |
-| `@extrakto_popup_position`            | `C`             | Set position of the tmux popup window. Possible values are in the `display-popup` entry in `man tmux`. Set this to `x,y` to set the x and y positions to `x` and `y` respectively. |
-| `@extrakto_popup_size`                | `90%`           | Set width and height of the tmux popup window. Set this to `w,h` to set the width to `w` and height to `h`. |
-| `@extrakto_split_direction`           | `a`             | Whether the tmux split will be `a`uto, `p`opup, `v`ertical or `h`orizontal |
-| `@extrakto_split_size`                | `7`             | The size of the tmux split (for vertical/horizontal) |
-| `@extrakto_alt`                       | `all`           | Show alternative filters. Possible values are: `all` to only show them for the all filter, `any` for any filter and `none` for never. |
-| `@extrakto_prefix_name`               | `all`           | Prefix the results with the filter name. Possible values are: `all` to only show the prefix for the all filter, `any` for any filter and `none` for never. |
-
-### Legacy Options
-
-| Option                                | Replaced by |
-| :---                                  | :--- |
-| `@extrakto_clip_tool_run`             | `@extrakto_clip_mode`, since 2026-03 |
-
-### Using skim instead of fzf
-
-If you prefer skim you need to set the `@extrakto_fzf_tool` option to `sk` or its full path. Skim should be compatible with fzf but let us know if you run into any issues.
-
-### Examples
-
-```
-set -g @extrakto_split_size "15"
-set -g @extrakto_clip_tool "xsel --input --clipboard" # works better for nvim
-set -g @extrakto_copy_key "tab"      # use tab to copy to clipboard
-set -g @extrakto_insert_key "enter"  # use enter to insert selection
-set -g @extrakto_fzf_unset_default_opts "false"  # keep our custom FZF_DEFAULT_OPTS
-set -g @extrakto_fzf_header "i c f g" # for small screens shorten the fzf header
-```
-
-### Custom Tmux Keybindings
-
-Instead of using `@extrakto_key` you can define your own key binding to start extrakto in your `.tmux.conf`:
-
-```
-tmux bind-key YOUR-KEY run-shell "~/.tmux/plugins/extrakto/scripts/open.sh \"#{pane_id}\""
-```
-
-If you wish you can also define different keys to start with a specific filter:
-
-```
-tmux bind-key YOUR-KEY run-shell "~/.tmux/plugins/extrakto/scripts/open.sh \"#{pane_id}\" FILTER-NAME"
-```
-
-
-## Custom Filters
-
-You can define your own filters by creating a file in `~/.config/extrakto/extrakto.conf`:
-
-```
+```ini
 [quote]
 regex: ("[^"\n\r]+")
 ```
 
-To override an existing filter copy it to your file first.
+To override a built-in filter, copy it there first. To remove an alternate
+filter, set it to `None`:
 
-If you want to remove one of the alternate filters you can set it to `None`:
-
-```toml
+```ini
 [quote]
 alt2: None
 ```
 
-See [extrakto.conf](extrakto.conf) for syntax and predefined filters.
-
-
----
+Note every filter regex is compiled with `re.I`; use `(?-i:...)` where case
+matters. See [extrakto.conf](extrakto.conf) for the syntax and the predefined
+filters.
 
 ## CLI tool
 
-You can also use extrakto as a standalone tool to extract tokens from text.
-
-### Installation
-
-For now simply clone the repository and link to the tool somewhere in your path:
+`extrakto.py` also works standalone as a token extractor:
 
 ```
 git clone https://github.com/laktak/extrakto
 cd extrakto
-# assuming you `export PATH=$PATH:~/.local/bin` in your `.bashrc`:
 ln -s $PWD/extrakto.py ~/.local/bin/extrakto
 ```
-
-Requires Python 3.6+.
-
-### Usage
 
 ```
 usage: extrakto.py [-h] [--name] [-w] [-l] [--all] [-a ADD] [-p] [-u] [--alt] [-r] [-m MIN_LENGTH] [--warn-empty]
@@ -244,10 +168,12 @@ optional arguments:
   --warn-empty          warn if result is empty
 ```
 
-## Contributions
+Note it reads `~/.config/extrakto/extrakto.conf` too, which is why the test suite
+is sensitive to what is set there.
 
-Thanks go to all contributors for their ideas and PRs!
+## Upstream
 
-**If you make a PR, please keep it small so that it's easier to test and review. Try to create one PR per feature/bug.**
-
-Please run `black` if you change any python code and run `shfmt -p` if you change any shell files.
+Original project by laktak, MIT licensed — see [LICENSE](LICENSE).
+Issues and PRs belong upstream:
+[github.com/laktak/extrakto](https://github.com/laktak/extrakto/) ·
+[codeberg.org/laktak/extrakto](https://codeberg.org/laktak/extrakto)
