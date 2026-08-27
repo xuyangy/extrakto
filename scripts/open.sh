@@ -4,13 +4,13 @@ script_dir=$(
 	builtin cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 	pwd
 )
-python_bin="$HOME/.pyenv/versions/anaconda3-2023.09-0/bin/python3"
+python_bin="$HOME/.pyenv/versions/3.13.12/bin/python3"
 extrakto="$python_bin $script_dir/../extrakto_plugin.py"
 
 pane_id=$1
 
 rc=129
-while (( rc == 129 )); do
+while ((rc == 129)); do
 	tmux popup \
 		-B \
 		-w "60%" \

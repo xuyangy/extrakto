@@ -82,7 +82,7 @@ enough to drop short paths like `src/main.py` — lower it there if that bites.
 | open | `/usr/bin/open`, invoked from the plugin process |
 | fzf | `/usr/local/bin/fzf` |
 | preview | `eza` for directories, `bat` for files |
-| python | the anaconda build pinned in `scripts/open.sh` |
+| python | `/Users/xuyangy/.pyenv/versions/3.13.12/bin/python3` (pyenv 3.13.12), pinned in `scripts/open.sh`. The old anaconda pin broke when that pyenv env was deleted (exit 127). |
 
 `ctrl-g` cycles the grab area through `recent`, `window recent`, `session recent`,
 `all recent`, `full`, `window full`, `session full`, `all full`. The `window`
