@@ -172,9 +172,10 @@ def fzf_sel(command, lines):
             p.stdin.flush()
     except BrokenPipeError:
         pass
-    p.stdin.close()
-    p.wait()
-    res = p.stdout.read().decode("utf-8").split("\n")
+    # communicate(), not wait()-then-read: a large multi-selection can fill the
+    # stdout pipe, and fzf would block writing while we block in wait()
+    out, _err = p.communicate()
+    res = out.decode("utf-8").split("\n")
     # omit last empty line
     return res[:-1]
 
@@ -688,15 +689,21 @@ class ExtraktoPlugin:
     def emit_tokens(self):
         """Print the token list for the current state (fzf reload target)."""
         out = sys.stdout
-        for item in get_cap(
-            self.sel_filter,
-            self.capture_panes(),
-            extrakto_all=self.extrakto_all,
-            extrakto_any=self.extrakto_any,
-        ):
-            out.write(item)
-            out.write("\n")
-        out.flush()
+        try:
+            for item in get_cap(
+                self.sel_filter,
+                self.capture_panes(),
+                extrakto_all=self.extrakto_all,
+                extrakto_any=self.extrakto_any,
+            ):
+                out.write(item)
+                out.write("\n")
+            out.flush()
+        except BrokenPipeError:
+            # fzf went away mid-reload; a traceback here would land in the popup.
+            # dup /dev/null over stdout so interpreter shutdown cannot re-raise
+            # while flushing the already-dead pipe.
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
 
     def transform(self, action):
         """Mutate state and print the fzf actions to apply (fzf transform target)."""
