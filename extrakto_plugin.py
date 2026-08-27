@@ -4,17 +4,21 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
-import traceback
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
+
+# shutil and traceback are imported where they are used: both are off the
+# launch path (cleanup after fzf closes, and the error branch), and each costs
+# a couple of ms of import time that every child process would otherwise pay.
 
 from extrakto import Extrakto, get_lines
 
 SCRIPT = os.path.realpath(__file__)
+SCRIPT_DIR = os.path.dirname(SCRIPT)
+MODULE = os.path.splitext(os.path.basename(SCRIPT))[0]
 PYTHON = sys.executable
 
 COLORS = {
@@ -151,25 +155,31 @@ def split_meta(line):
     return parts[0], parts[1] or None, parts[2] or None, parts[3] or None
 
 
-def fzf_sel(command, lines):
+def fzf_sel(command, batches):
     p = subprocess.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None
     )
     assert p.stdin is not None and p.stdout is not None
     try:
-        # buffer writes: flushing per line costs one syscall per token, but we
-        # still want fzf to show results before every pane has been captured
+        # one flush per captured pane. flushing per line would cost a syscall per
+        # token, but waiting on a byte threshold alone held the trigger pane's
+        # candidates back until some later, slower pane pushed the buffer over it
+        # - measured at ~22 ms, nearly the whole capture. note fzf only draws
+        # once it has enough items to fill the list area (~14 rows on a 30-row
+        # popup), so a sparse trigger pane can still look blank for a while.
         buf = bytearray()
-        for line in lines:
-            buf += line.encode("utf-8")
-            buf += b"\n"
-            if len(buf) >= FZF_FLUSH_BYTES:
+        for batch in batches:
+            for line in batch:
+                buf += line.encode("utf-8")
+                buf += b"\n"
+                if len(buf) >= FZF_FLUSH_BYTES:
+                    p.stdin.write(buf)
+                    p.stdin.flush()
+                    buf.clear()
+            if buf:
                 p.stdin.write(buf)
                 p.stdin.flush()
                 buf.clear()
-        if buf:
-            p.stdin.write(buf)
-            p.stdin.flush()
     except BrokenPipeError:
         pass
     # communicate(), not wait()-then-read: a large multi-selection can fill the
@@ -180,7 +190,13 @@ def fzf_sel(command, lines):
     return res[:-1]
 
 
-def get_cap(sel_filter, chunks, *, extrakto_all, extrakto_any):
+def get_cap_batches(sel_filter, chunks, *, extrakto):
+    """Yield one list of candidates per captured pane.
+
+    The batch boundary is the point where the next capture may block, so it is
+    also the only point where a consumer can usefully flush. Keeping it in the
+    producer means fzf_sel does not have to guess where a pane ended.
+    """
     seen = set()
     any_match = False
 
@@ -189,32 +205,45 @@ def get_cap(sel_filter, chunks, *, extrakto_all, extrakto_any):
             res = get_lines(data)
         elif sel_filter == "all":
             res = []
-            for name in extrakto_all.all():
-                res += extrakto_all[name].filter(data)
+            for name in extrakto.all():
+                res += extrakto[name].filter(data)
         else:
-            res = extrakto_any[sel_filter].filter(data)
+            res = extrakto[sel_filter].filter(data)
 
+        batch = []
         for item in reversed(res):
             if item not in seen:
                 # dedup is by token, so a token seen in several panes keeps the
                 # first origin - and the trigger pane is always captured first
                 seen.add(item)
-                yield (
+                batch.append(
                     f"{item}{META_SEP}{pane}{META_SEP}{socket or ''}"
                     f"{META_SEP}{cwd or ''}"
                 )
                 any_match = True
+        if batch:
+            yield batch
 
     if not any_match:
-        yield f"NO MATCH - use a different filter{META_SEP}{META_SEP}{META_SEP}"
+        yield [f"NO MATCH - use a different filter{META_SEP}{META_SEP}{META_SEP}"]
+
+
+def get_cap(sel_filter, chunks, *, extrakto):
+    """Flat view of get_cap_batches, for callers that do not care about panes."""
+    for batch in get_cap_batches(sel_filter, chunks, extrakto=extrakto):
+        yield from batch
 
 
 class ExtraktoPlugin:
 
-    def __init__(self, trigger_pane, launch_mode, state_dir):
+    def __init__(self, trigger_pane, launch_mode, state_dir, trigger_path=None):
         self.trigger_pane = trigger_pane
         self.launch_mode = launch_mode
         self.state_dir = state_dir
+        # the key binding expands #{pane_current_path} for us, which saves a
+        # tmux round trip and is the only reliable source now that the popup no
+        # longer inherits the trigger pane's directory
+        self.trigger_path = trigger_path
 
         self.clip_tool = "/usr/bin/pbcopy"
         self.clip_mode = "bg"
@@ -268,6 +297,17 @@ class ExtraktoPlugin:
         os.environ.pop("FZF_DEFAULT_OPTS", None)
         os.environ.pop("FZF_DEFAULT_OPTS_FILE", None)
 
+    def extrakto_for(self, sel_filter):
+        """The one Extrakto this filter needs, built on demand.
+
+        Passing both as keyword arguments defeated the lazy properties: Python
+        evaluates every argument before the call, so every run parsed the config
+        twice (~5 ms) even though only one variant is ever used.
+        """
+        if sel_filter == "line":
+            return None
+        return self.extrakto_all if sel_filter == "all" else self.extrakto_any
+
     @property
     def extrakto_all(self):
         if self._extrakto_all is None:
@@ -299,6 +339,7 @@ class ExtraktoPlugin:
                 {
                     "trigger_pane": self.trigger_pane,
                     "launch_mode": self.launch_mode,
+                    "trigger_path": self.trigger_path,
                     "sel_filter": self.sel_filter,
                     "grab_area": self.grab_area,
                     "clip_mode": self.clip_mode,
@@ -320,12 +361,30 @@ class ExtraktoPlugin:
     def from_state(cls, state_dir):
         with open(os.path.join(state_dir, "state.json"), encoding="utf-8") as f:
             st = json.load(f)
-        self = cls(st["trigger_pane"], st["launch_mode"], state_dir)
+        self = cls(
+            st["trigger_pane"],
+            st["launch_mode"],
+            state_dir,
+            st.get("trigger_path"),
+        )
         self.load_state()
         return self
 
     def child_command(self, *args):
-        parts = [PYTHON, SCRIPT, *args, self.state_dir]
+        # -S -m, not a script path: a file run as __main__ recompiles this
+        # module every time, while -m reuses the cached bytecode, and -S skips
+        # site. Together they take ~14 ms off each of the two children a filter
+        # keypress spawns. -m needs the module dir importable, hence PYTHONPATH.
+        parts = [
+            "env",
+            f"PYTHONPATH={SCRIPT_DIR}",
+            PYTHON,
+            "-S",
+            "-m",
+            MODULE,
+            *args,
+            self.state_dir,
+        ]
         return " ".join(shlex.quote(p) for p in parts)
 
     # -- capture -------------------------------------------------------------
@@ -469,6 +528,11 @@ class ExtraktoPlugin:
         return [parse_pane_line(line) for line in out.strip().split("\n") if line]
 
     def trigger_cwd(self):
+        # the key binding passes #{pane_current_path} in argv, so the usual case
+        # costs nothing. the tmux round trip below is only a fallback for a
+        # launch that did not supply it.
+        if self.trigger_path:
+            return self.trigger_path
         try:
             return subprocess.check_output(
                 ["tmux", "display-message", "-p", "-t", self.trigger_pane,
@@ -693,8 +757,7 @@ class ExtraktoPlugin:
             for item in get_cap(
                 self.sel_filter,
                 self.capture_panes(),
-                extrakto_all=self.extrakto_all,
-                extrakto_any=self.extrakto_any,
+                extrakto=self.extrakto_for(self.sel_filter),
             ):
                 out.write(item)
                 out.write("\n")
@@ -818,11 +881,15 @@ class ExtraktoPlugin:
 
             res = fzf_sel(
                 fzf_cmd,
-                get_cap(self.sel_filter, self.capture_panes(),
-                        extrakto_all=self.extrakto_all,
-                        extrakto_any=self.extrakto_any),
+                get_cap_batches(
+                    self.sel_filter,
+                    self.capture_panes(),
+                    extrakto=self.extrakto_for(self.sel_filter),
+                ),
             )
         except Exception:
+            import traceback
+
             msg = (
                 str(fzf_cmd)
                 + "\n"
@@ -916,13 +983,16 @@ def main(argv):
         return 0
 
     if len(argv) < 3:
-        print("Usage: extrakto_plugin.py trigger_pane launch_mode")
+        print("Usage: extrakto_plugin.py trigger_pane launch_mode [trigger_path]")
         return 1
 
+    trigger_path = argv[3] if len(argv) > 3 else None
     state_dir = tempfile.mkdtemp(prefix="extrakto-")
     try:
-        return ExtraktoPlugin(argv[1], argv[2], state_dir).capture()
+        return ExtraktoPlugin(argv[1], argv[2], state_dir, trigger_path).capture()
     finally:
+        import shutil
+
         shutil.rmtree(state_dir, ignore_errors=True)
 
 

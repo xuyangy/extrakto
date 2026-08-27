@@ -3,11 +3,13 @@
 import os
 import re
 import sys
-import traceback
 
-from argparse import ArgumentParser
 from collections import OrderedDict
 from configparser import ConfigParser
+
+# argparse and traceback are CLI-only and imported under __main__: the plugin
+# imports this module for Extrakto/get_lines on every launch and every reload
+# child, and should not pay for the command-line entry point.
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
@@ -203,6 +205,9 @@ def main(parser):
 
 
 if __name__ == "__main__":
+    import traceback
+    from argparse import ArgumentParser
+
     parser = ArgumentParser(description="Extracts tokens from plaintext.")
 
     parser.add_argument(
