@@ -248,7 +248,7 @@ class ExtraktoPlugin:
         self.clip_tool = "/usr/bin/pbcopy"
         self.clip_mode = "bg"
         self.clip_mode_key = "ctrl-t"
-        self.copy_key = "tab"
+        self.copy_key = "ctrl-y"
         self.edit_key = "ctrl-e"
         self.editor = os.environ.get("EDITOR", "vi")
         self.filter_key = "ctrl-f"
